@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Processador de Projetos PX</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+    <style>
+        .loader {
+            border: 5px solid #4a5568; /* dark-gray */
+            border-top: 5px solid #f97316; /* orange */
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-blue-900 font-sans text-white">
+    <div class="container mx-auto p-4 md:p-8">
+        <header class="flex items-center mb-10">
+            <img src="assets/logotipo.png" alt="Logotipo" class="h-16 mr-6" onerror="this.style.display='none'">
+            <h1 class="text-4xl font-bold">Processador de Projetos PX</h1>
+        </header>
+
+        <main class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div class="bg-gray-800 p-6 rounded-lg shadow-2xl">
+                <h2 class="text-2xl font-semibold mb-4">Função 1: Extrair TAGs para Excel</h2>
+                <p class="text-gray-300 mb-6">
+                    Envie um ou mais arquivos PDF para extrair as TAGs.
+                    Uma planilha Excel (.xlsx) será gerada com os dados.
+                </p>
+                <div class="mb-4">
+                    <label for="pdf-upload1" class="block text-sm font-medium text-gray-300 mb-2">1. Selecione os arquivos PDF:</label>
+                    <input type="file" id="pdf-upload1" multiple accept=".pdf" class="block w-full text-sm text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-orange-500 file:text-white hover:file:bg-orange-600 cursor-pointer">
+                </div>
+                <button id="process-pdf-btn" class="w-full bg-orange-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-orange-600 transition duration-300 shadow-lg">
+                    Processar e Gerar Excel
+                </button>
+            </div>
+
+            <div class="bg-gray-800 p-6 rounded-lg shadow-2xl">
+                <h2 class="text-2xl font-semibold mb-4">Função 2: Pintar TAGs no PDF</h2>
+                <p class="text-gray-300 mb-6">
+                    Envie os PDFs e a planilha. As TAGs serão pintadas de verde, conforme a coluna opcional <strong>'Quantidade'</strong>.
+                </p>
+                <div class="mb-4">
+                    <label for="pdf-upload2" class="block text-sm font-medium text-gray-300 mb-2">1. Selecione os arquivos PDF:</label>
+                    <input type="file" id="pdf-upload2" multiple accept=".pdf" class="block w-full text-sm text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-orange-500 file:text-white hover:file:bg-orange-600 cursor-pointer">
+                </div>
+                <div class="mb-4">
+                    <label for="excel-upload" class="block text-sm font-medium text-gray-300 mb-2">2. Selecione a planilha Excel:</label>
+                    <input type="file" id="excel-upload" accept=".xlsx" class="block w-full text-sm text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-orange-500 file:text-white hover:file:bg-orange-600 cursor-pointer">
+                </div>
+                <button id="paint-tags-btn" class="w-full bg-orange-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-orange-600 transition duration-300 shadow-lg">
+                    Pintar TAGs e Exportar
+                </button>
+            </div>
+        </main>
+
+        <section id="status-container" class="mt-8 bg-gray-800 p-6 rounded-lg shadow-2xl hidden">
+            <h3 class="text-xl font-semibold text-white mb-4">Resultados</h3>
+            <div id="loader" class="loader mx-auto my-4 hidden"></div>
+            <pre id="status" class="bg-gray-900 p-4 rounded-md text-sm text-gray-300 overflow-auto max-h-60 w-full"></pre>
+            <div id="download-links" class="mt-4 grid gap-2"></div>
+        </section>
+    </div>
+
+    <footer class="text-center p-6 mt-8 text-gray-400 text-sm">
+        <p>Desenvolvido por <a href="https://www.linkedin.com/in/felipe-reblin-ehs/" target="_blank" rel="noopener noreferrer" class="text-orange-400 hover:underline">Felipe Reblin</a></p>
+    </footer>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.10.377/pdf.worker.min.js`;
+
+        const processPdfBtn = document.getElementById('process-pdf-btn');
+        const paintTagsBtn = document.getElementById('paint-tags-btn');
+        const pdfUpload1 = document.getElementById('pdf-upload1');
+        const pdfUpload2 = document.getElementById('pdf-upload2');
+        const excelUpload = document.getElementById('excel-upload');
+        const statusContainer = document.getElementById('status-container');
+        const loader = document.getElementById('loader');
+        const statusEl = document.getElementById('status');
+        const downloadLinksEl = document.getElementById('download-links');
+
+        function showStatus(message, isLoading = false) {
+            statusContainer.classList.remove('hidden');
+            statusEl.textContent += message + '\n';
+            statusEl.scrollTop = statusEl.scrollHeight;
+            loader.classList.toggle('hidden', !isLoading);
+        }
+        
+        function clearStatus() {
+            statusContainer.classList.add('hidden');
+            statusEl.textContent = '';
+            downloadLinksEl.innerHTML = '';
+            loader.classList.add('hidden');
+        }
+
+        const tagRegex = /[A-Z0-9]{12}/g;
+
+        async function processAndExtractTags() {
+            if (pdfUpload1.files.length === 0) {
+                alert('Por favor, selecione pelo menos um arquivo PDF.');
+                return;
+            }
+            clearStatus();
+            showStatus('Iniciando extração de TAGs...', true);
+
+            const data = [];
+            for (const file of pdfUpload1.files) {
+                const structureName = file.name.replace('.pdf', '');
+                showStatus(`Processando arquivo: ${file.name}`);
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+                    let allText = '';
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const textContent = await page.getTextContent();
+                        allText += textContent.items.map(item => item.str).join(' ');
+                    }
+
+                    const tags = allText.match(tagRegex) || [];
+                    const uniqueTags = [...new Set(tags)]; 
+                    
+                    if(uniqueTags.length > 0) {
+                        uniqueTags.forEach(tag => {
+                            data.push({ 'Nome da Estrutura': structureName, 'TAG': tag });
+                        });
+                        showStatus(`  - ${uniqueTags.length} TAGs únicas encontradas.`);
+                    } else {
+                         showStatus(`  - Nenhuma TAG encontrada no formato esperado.`);
+                    }
+                } catch (error) {
+                    console.error('Erro ao processar o PDF:', error);
+                    showStatus(`Erro ao processar ${file.name}: ${error.message}`);
+                }
+            }
+
+            if (data.length > 0) {
+                generateExcel(data);
+                showStatus('Planilha Excel gerada com sucesso!', false);
+            } else {
+                showStatus('Nenhuma TAG encontrada em nenhum dos arquivos.', false);
+            }
+        }
+
+        function generateExcel(data) {
+            const worksheet = XLSX.utils.json_to_sheet(data);
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, 'TAGs de Estruturas');
+            XLSX.writeFile(workbook, 'tags_extraidas.xlsx');
+            showStatus('Download da planilha iniciado.');
+        }
+
+        async function processAndPaintTags() {
+            if (pdfUpload2.files.length === 0 || !excelUpload.files[0]) {
+                alert('Por favor, selecione os arquivos PDF e a planilha Excel.');
+                return;
+            }
+            clearStatus();
+            showStatus('Iniciando processo para pintar TAGs...', true);
+
+            try {
+                const tagsByStructure = await parseExcel(excelUpload.files[0]);
+
+                for (const file of pdfUpload2.files) {
+                    const structureName = file.name.replace('.pdf', '');
+                    showStatus(`Processando arquivo: ${file.name}`);
+
+                    if (!tagsByStructure[structureName]) {
+                        showStatus(`  - Nenhuma TAG encontrada para '${structureName}'. Pulando.`);
+                        continue;
+                    }
+
+                    const tagsToFind = tagsByStructure[structureName];
+                    const arrayBuffer = await file.arrayBuffer();
+                    const modifiedPdfBytes = await highlightTagsInPdf(arrayBuffer, tagsToFind);
+                    
+                    createDownloadLink(modifiedPdfBytes, `pintado_${file.name}`);
+                    showStatus(`  - PDF '${file.name}' modificado e pronto para download.`);
+                }
+            } catch (error) {
+                console.error('Erro no processo de pintura de TAGs:', error);
+                showStatus(`Erro: ${error.message}`, false);
+            }
+            showStatus('Processo concluído!', false);
+        }
+
+        async function parseExcel(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const data = new Uint8Array(event.target.result);
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        const sheetName = workbook.SheetNames[0];
+                        const worksheet = workbook.Sheets[sheetName];
+                        const json = XLSX.utils.sheet_to_json(worksheet);
+                        
+                        const tagsByStructure = {};
+                        json.forEach(row => {
+                            const structureName = row['Nome da Estrutura'];
+                            const tag = row['TAG'];
+                            const quantity = row['Quantidade'] || 1;
+
+                            if (structureName && tag) {
+                                if (!tagsByStructure[structureName]) {
+                                    tagsByStructure[structureName] = [];
+                                }
+                                tagsByStructure[structureName].push({
+                                    tag: String(tag),
+                                    count: parseInt(quantity, 10)
+                                });
+                            }
+                        });
+                        resolve(tagsByStructure);
+                    } catch (e) {
+                        reject(e);
+                    }
+                };
+                reader.onerror = reject;
+                reader.readAsArrayBuffer(file);
+            });
+        }
+
+        async function highlightTagsInPdf(pdfBytes, tagsToHighlight) {
+            const { PDFDocument, rgb, pushGraphicsState, popGraphicsState, concatTransformationMatrix } = PDFLib;
+            const pdfDoc = await PDFDocument.load(pdfBytes);
+            const pdfBytesCopy = new Uint8Array(pdfBytes);
+            const pdfjsDoc = await pdfjsLib.getDocument({ data: pdfBytesCopy }).promise;
+            
+            const paintCount = {};
+            tagsToHighlight.forEach(t => {
+                paintCount[t.tag] = 0;
+            });
+
+            const pdfLibPages = pdfDoc.getPages();
+
+            for (let i = 0; i < pdfjsDoc.numPages; i++) {
+                const pdfjsPage = await pdfjsDoc.getPage(i + 1);
+                const pdfLibPage = pdfLibPages[i];
+                const textContent = await pdfjsPage.getTextContent();
+                
+                tagsToHighlight.forEach(tagInfo => {
+                    textContent.items.forEach(item => {
+                        if (item.str.includes(tagInfo.tag) && paintCount[tagInfo.tag] < tagInfo.count) {
+                            pdfLibPage.pushOperators(pushGraphicsState());
+                            const [a, b, c, d, e, f] = item.transform;
+                            pdfLibPage.pushOperators(concatTransformationMatrix(a, b, c, d, e, f));
+                            pdfLibPage.drawRectangle({
+                                x: 0,
+                                y: -item.height / 4,
+                                width: item.width,
+                                height: item.height,
+                                color: rgb(0, 1, 0),
+                                opacity: 0.3,
+                            });
+                            pdfLibPage.pushOperators(popGraphicsState());
+                            paintCount[tagInfo.tag]++;
+                        }
+                    });
+                });
+            }
+            return await pdfDoc.save();
+        }
+        
+        function createDownloadLink(bytes, filename) {
+            const blob = new Blob([bytes], { type: 'application/pdf' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.textContent = `Baixar ${filename}`;
+            a.className = 'block bg-orange-500 text-white font-bold py-2 px-4 rounded hover:bg-orange-600 text-center transition-colors';
+            downloadLinksEl.appendChild(a);
+        }
+
+        processPdfBtn.addEventListener('click', processAndExtractTags);
+        paintTagsBtn.addEventListener('click', processAndPaintTags);
+    </script>
+</body>
+</html>
+
