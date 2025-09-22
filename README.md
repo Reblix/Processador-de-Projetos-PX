@@ -31,37 +31,9 @@ Suporte a Rotação: O destaque funciona corretamente mesmo em TAGs na vertical,
 
 Exportação: Baixe as versões dos PDFs com as marcações visuais aplicadas.
 
-Como Usar
-A aplicação é um único arquivo HTML e não requer instalação de dependências ou um servidor.
-
-Clone ou baixe este repositório.
-
-(Opcional) Crie uma pasta chamada assets no mesmo diretório do index.html e adicione o arquivo logotipo.png.
-
-Abra o arquivo index.html em um navegador de internet moderno (Google Chrome, Firefox, etc.).
-
-Para a Função 1:
-Na seção "Extrair TAGs para Excel", clique em "Selecione os arquivos PDF" e escolha os projetos desejados.
-
-Clique no botão "Processar e Gerar Excel".
-
-Aguarde o processamento e o download do arquivo tags_extraidas.xlsx será iniciado automaticamente.
-
-Para a Função 2:
-Na seção "Pintar TAGs no PDF", selecione os arquivos PDF que deseja verificar.
-
-Em seguida, selecione a planilha Excel que contém as TAGs a serem pintadas.
-
-Clique no botão "Pintar TAGs e Exportar".
-
-Após o processamento, links para download dos PDFs modificados aparecerão na área de "Resultados".
-
 Tecnologias Utilizadas
 Frontend: HTML5, Tailwind CSS, JavaScript (Vanilla)
 
 Manipulação de PDF: PDF.js e pdf-lib
 
 Manipulação de Excel: SheetJS (xlsx)
-
-Autor
-Felipe Reblin - LinkedIn
