@@ -34,15 +34,22 @@
             <div class="bg-gray-800 p-6 rounded-lg shadow-2xl">
                 <h2 class="text-2xl font-semibold mb-4">Função 1: Extrair TAGs para Excel</h2>
                 <p class="text-gray-300 mb-6">
-                    Envie um ou mais arquivos PDF para extrair as TAGs.
-                    Uma planilha Excel (.xlsx) será gerada com os dados.
+                    Envie os PDFs, aguarde a análise e selecione o padrão de TAG correto para iniciar a extração.
                 </p>
                 <div class="mb-4">
                     <label for="pdf-upload1" class="block text-sm font-medium text-gray-300 mb-2">1. Selecione os arquivos PDF:</label>
                     <input type="file" id="pdf-upload1" multiple accept=".pdf" class="block w-full text-sm text-gray-300 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-orange-500 file:text-white hover:file:bg-orange-600 cursor-pointer">
                 </div>
+                
+                <div id="pattern-selection-container" class="hidden my-4">
+                    <label class="block text-sm font-medium text-gray-300 mb-2">2. Selecione os padrões de TAG encontrados:</label>
+                    <div id="pattern-list" class="space-y-2 max-h-40 overflow-y-auto bg-gray-700 p-3 rounded-md border border-gray-600">
+                        <!-- Checkboxes serão injetados aqui -->
+                    </div>
+                </div>
+
                 <button id="process-pdf-btn" class="w-full bg-orange-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-orange-600 transition duration-300 shadow-lg">
-                    Processar e Gerar Excel
+                    Analisar PDFs
                 </button>
             </div>
 
@@ -89,6 +96,11 @@
         const loader = document.getElementById('loader');
         const statusEl = document.getElementById('status');
         const downloadLinksEl = document.getElementById('download-links');
+        
+        let analysisResults = {
+            tokensByFile: new Map(),
+            phase: 'initial' 
+        };
 
         function showStatus(message, isLoading = false) {
             statusContainer.classList.remove('hidden');
@@ -102,64 +114,198 @@
             statusEl.textContent = '';
             downloadLinksEl.innerHTML = '';
             loader.classList.add('hidden');
+            document.getElementById('pattern-selection-container').classList.add('hidden');
+            analysisResults.phase = 'initial';
+            processPdfBtn.textContent = 'Analisar PDFs';
+            processPdfBtn.disabled = false;
         }
 
-        const tagRegex = /[A-Z0-9]{12}/g;
+        function generateStructure(token) {
+            return token.replace(/[A-Z]/g, 'A').replace(/[0-9]/g, 'D');
+        }
 
-        async function processAndExtractTags() {
+        async function extractAllTextAndAnnotations(file) {
+            const allWords = new Set();
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            
+            for (let i = 1; i <= pdf.numPages; i++) {
+                const page = await pdf.getPage(i);
+                const annotations = await page.getAnnotations();
+                annotations.forEach(ann => {
+                    if (ann.contents) ann.contents.split(/\s+/).forEach(w => allWords.add(w));
+                });
+
+                const textContent = await page.getTextContent();
+                if (textContent.items.length > 0) {
+                    const sortedItems = textContent.items.sort((a, b) => {
+                        const yA = a.transform[5]; const yB = b.transform[5];
+                        const xA = a.transform[4]; const xB = b.transform[4];
+                        if (Math.abs(yA - yB) > 2) return yB - yA;
+                        return xA - xB;
+                    });
+                    
+                    let currentWord = null;
+                    for (const item of sortedItems) {
+                        if (!item.str.trim()) continue;
+                        if (!currentWord) {
+                            currentWord = { text: item.str, y: item.transform[5], x: item.transform[4], width: item.width, height: item.height };
+                            continue;
+                        }
+                        const yDist = Math.abs(item.transform[5] - currentWord.y);
+                        const xDist = item.transform[4] - (currentWord.x + currentWord.width);
+                        const xThreshold = currentWord.height * 0.9;
+                        if (yDist < currentWord.height * 0.5 && xDist >= 0 && xDist < xThreshold) {
+                            currentWord.text += item.str;
+                            currentWord.width = (item.transform[4] + item.width) - currentWord.x;
+                        } else {
+                            currentWord.text.split(/\s+/).forEach(w => allWords.add(w));
+                            currentWord = { text: item.str, y: item.transform[5], x: item.transform[4], width: item.width, height: item.height };
+                        }
+                    }
+                    if (currentWord) currentWord.text.split(/\s+/).forEach(w => allWords.add(w));
+                }
+            }
+            return allWords;
+        }
+
+        function displayPatternChoices(structureMap) {
+            const patternList = document.getElementById('pattern-list');
+            const container = document.getElementById('pattern-selection-container');
+            patternList.innerHTML = '';
+
+            if (structureMap.size === 0) {
+                patternList.innerHTML = '<p class="text-gray-400">Nenhum padrão de TAG em potencial foi encontrado.</p>';
+                processPdfBtn.disabled = true;
+                processPdfBtn.textContent = 'Nenhum Padrão Encontrado';
+            } else {
+                const sortedStructures = [...structureMap.entries()].sort((a, b) => b[1].count - a[1].count);
+
+                sortedStructures.forEach(([structure, data]) => {
+                    const div = document.createElement('div');
+                    div.className = 'flex items-center p-1';
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.id = `struct-${structure}`;
+                    checkbox.value = structure;
+                    checkbox.className = 'h-4 w-4 rounded border-gray-500 bg-gray-800 text-orange-500 focus:ring-orange-600';
+                    
+                    const label = document.createElement('label');
+                    label.htmlFor = `struct-${structure}`;
+                    label.className = 'ml-3 block text-sm font-medium text-gray-300 select-none';
+                    label.textContent = `${structure} (ex: ${data.example}, ${data.count} ocorrências)`;
+
+                    div.appendChild(checkbox);
+                    div.appendChild(label);
+                    patternList.appendChild(div);
+                });
+                processPdfBtn.textContent = 'Extrair TAGs Selecionadas';
+                processPdfBtn.disabled = false;
+                analysisResults.phase = 'selection';
+            }
+            container.classList.remove('hidden');
+        }
+
+        async function startPatternDiscovery() {
             if (pdfUpload1.files.length === 0) {
                 alert('Por favor, selecione pelo menos um arquivo PDF.');
                 return;
             }
             clearStatus();
-            showStatus('Iniciando extração de TAGs...', true);
+            showStatus('Analisando PDFs para encontrar padrões...', true);
+            analysisResults.tokensByFile.clear();
 
-            const data = [];
+            const allPotentialWords = new Set();
             for (const file of pdfUpload1.files) {
-                const structureName = file.name.replace('.pdf', '');
-                showStatus(`Processando arquivo: ${file.name}`);
-                try {
-                    const arrayBuffer = await file.arrayBuffer();
-                    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-                    let allText = '';
-                    for (let i = 1; i <= pdf.numPages; i++) {
-                        const page = await pdf.getPage(i);
-                        const textContent = await page.getTextContent();
-                        allText += textContent.items.map(item => item.str).join(' ');
-                    }
+                showStatus(`Lendo arquivo: ${file.name}`);
+                const wordsForThisFile = await extractAllTextAndAnnotations(file);
+                analysisResults.tokensByFile.set(file.name, wordsForThisFile);
+                wordsForThisFile.forEach(word => allPotentialWords.add(word));
+            }
+            
+            const structureMap = new Map();
+            const genericTokenRegex = /[A-Z0-9][A-Z0-9-]{7,20}/g;
 
-                    const tags = allText.match(tagRegex) || [];
-                    const uniqueTags = [...new Set(tags)]; 
-                    
-                    if(uniqueTags.length > 0) {
-                        uniqueTags.forEach(tag => {
-                            data.push({ 'Nome da Estrutura': structureName, 'TAG': tag });
-                        });
-                        showStatus(`  - ${uniqueTags.length} TAGs únicas encontradas.`);
-                    } else {
-                         showStatus(`  - Nenhuma TAG encontrada no formato esperado.`);
-                    }
-                } catch (error) {
-                    console.error('Erro ao processar o PDF:', error);
-                    showStatus(`Erro ao processar ${file.name}: ${error.message}`);
+            allPotentialWords.forEach(word => {
+                const matches = word.match(genericTokenRegex);
+                if (matches) {
+                    matches.forEach(token => {
+                        const structure = generateStructure(token);
+                        if (structure.includes('A') && structure.includes('D') && token.length > 8) {
+                            if (!structureMap.has(structure)) {
+                                structureMap.set(structure, { count: 0, example: token });
+                            }
+                            structureMap.get(structure).count++;
+                        }
+                    });
                 }
+            });
+
+            showStatus('Análise concluída. Por favor, selecione os padrões corretos abaixo.', false);
+            displayPatternChoices(structureMap);
+        }
+
+        function extractFinalTags() {
+            const selectedStructures = Array.from(document.querySelectorAll('#pattern-list input:checked')).map(cb => cb.value);
+
+            if (selectedStructures.length === 0) {
+                alert('Por favor, selecione pelo menos um padrão de TAG.');
+                return;
             }
 
+            clearStatus();
+            showStatus(`Iniciando extração com os padrões: ${selectedStructures.join(', ')}`, true);
+
+            const data = [];
+            for (const [fileName, words] of analysisResults.tokensByFile.entries()) {
+                const structureName = fileName.replace('.pdf', '');
+                const tagsForThisFile = new Set();
+                
+                words.forEach(word => {
+                    const structure = generateStructure(word);
+                    if (selectedStructures.includes(structure)) {
+                        tagsForThisFile.add(word);
+                    }
+                });
+
+                if (tagsForThisFile.size > 0) {
+                    showStatus(`  - Encontrados ${tagsForThisFile.size} dados em ${fileName}.`);
+                    tagsForThisFile.forEach(tag => {
+                        data.push({ 'Nome da Estrutura': structureName, 'TAG': tag });
+                    });
+                }
+            }
+            
             if (data.length > 0) {
                 generateExcel(data);
                 showStatus('Planilha Excel gerada com sucesso!', false);
             } else {
-                showStatus('Nenhuma TAG encontrada em nenhum dos arquivos.', false);
+                showStatus('Nenhum dado correspondente aos padrões selecionados foi encontrado.', false);
             }
+
+            clearStatus();
         }
 
         function generateExcel(data) {
             const worksheet = XLSX.utils.json_to_sheet(data);
             const workbook = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(workbook, worksheet, 'TAGs de Estruturas');
-            XLSX.writeFile(workbook, 'tags_extraidas.xlsx');
+            XLSX.utils.book_append_sheet(workbook, worksheet, 'Dados Extraídos');
+            XLSX.writeFile(workbook, 'dados_extraidos.xlsx');
             showStatus('Download da planilha iniciado.');
         }
+
+        processPdfBtn.addEventListener('click', () => {
+            if (analysisResults.phase === 'initial') {
+                startPatternDiscovery();
+            } else if (analysisResults.phase === 'selection') {
+                extractFinalTags();
+            }
+        });
+
+        // --- FUNÇÃO 2 (PINTAR TAGS) ---
+        // O código da Função 2 permanece o mesmo.
+        
+        paintTagsBtn.addEventListener('click', processAndPaintTags);
 
         async function processAndPaintTags() {
             if (pdfUpload2.files.length === 0 || !excelUpload.files[0]) {
@@ -284,8 +430,6 @@
             downloadLinksEl.appendChild(a);
         }
 
-        processPdfBtn.addEventListener('click', processAndExtractTags);
-        paintTagsBtn.addEventListener('click', processAndPaintTags);
     </script>
 </body>
 </html>
