@@ -10,8 +10,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
     <style>
         .loader {
-            border: 5px solid #4a5568;
-            border-top: 5px solid #f97316;
+            border: 5px solid #4a5568; /* dark-gray */
+            border-top: 5px solid #f97316; /* orange */
             border-radius: 50%;
             width: 50px;
             height: 50px;
@@ -34,7 +34,7 @@
             <div class="bg-gray-800 p-6 rounded-lg shadow-2xl">
                 <h2 class="text-2xl font-semibold mb-4">Função 1: Extrair TAGs para Excel</h2>
                 <p class="text-gray-300 mb-6">
-                    Envie os PDFs. O sistema reconstruirá textos fragmentados para identificar TAGs de qualquer formato.
+                    Envie os PDFs, aguarde a análise e selecione o padrão de TAG correto para iniciar a extração.
                 </p>
                 <div class="mb-4">
                     <label for="pdf-upload1" class="block text-sm font-medium text-gray-300 mb-2">1. Selecione os arquivos PDF:</label>
@@ -44,7 +44,8 @@
                 <div id="pattern-selection-container" class="hidden my-4">
                     <label class="block text-sm font-medium text-gray-300 mb-2">2. Selecione os padrões de TAG encontrados:</label>
                     <div id="pattern-list" class="space-y-2 max-h-40 overflow-y-auto bg-gray-700 p-3 rounded-md border border-gray-600">
-                        </div>
+                        <!-- Checkboxes serão injetados aqui -->
+                    </div>
                 </div>
 
                 <button id="process-pdf-btn" class="w-full bg-orange-500 text-white font-bold py-3 px-4 rounded-lg hover:bg-orange-600 transition duration-300 shadow-lg">
@@ -55,7 +56,7 @@
             <div class="bg-gray-800 p-6 rounded-lg shadow-2xl">
                 <h2 class="text-2xl font-semibold mb-4">Função 2: Pintar TAGs no PDF</h2>
                 <p class="text-gray-300 mb-6">
-                    Envie PDFs e Planilha. A pintura se adapta a textos fragmentados e respeita o tamanho exato da TAG.
+                    Envie os PDFs e a planilha. As TAGs serão pintadas de verde, conforme a coluna opcional <strong>'Quantidade'</strong>.
                 </p>
                 <div class="mb-4">
                     <label for="pdf-upload2" class="block text-sm font-medium text-gray-300 mb-2">1. Selecione os arquivos PDF:</label>
@@ -123,62 +124,6 @@
             return token.replace(/[A-Z]/g, 'A').replace(/[0-9]/g, 'D');
         }
 
-        // --- LÓGICA DE RECONSTRUÇÃO DE LINHA (RESOLVE FRAGMENTAÇÃO) ---
-        async function extractTextLinesFromPage(page) {
-            const textContent = await page.getTextContent();
-            if (!textContent.items.length) return [];
-
-            // 1. Agrupar itens por linha visual (Y aproximado)
-            const linesMap = new Map();
-            const Y_TOLERANCE = 4; // Tolerância para desalinhamento vertical
-
-            textContent.items.forEach(item => {
-                if (!item.str.trim()) return; // Ignora itens vazios
-                
-                // Normaliza Y para agrupar
-                const y = item.transform[5];
-                let foundY = null;
-                for (const key of linesMap.keys()) {
-                    if (Math.abs(key - y) < Y_TOLERANCE) {
-                        foundY = key;
-                        break;
-                    }
-                }
-                const key = foundY !== null ? foundY : y;
-                if (!linesMap.has(key)) linesMap.set(key, []);
-                linesMap.get(key).push(item);
-            });
-
-            const fullLines = [];
-
-            // 2. Para cada linha, ordenar por X e concatenar
-            linesMap.forEach(items => {
-                items.sort((a, b) => a.transform[4] - b.transform[4]); // Ordena por X
-                
-                let lineStr = "";
-                let lastX = null;
-                let lastWidth = 0;
-
-                items.forEach(item => {
-                    if (lastX !== null) {
-                        // Se houver um buraco grande, insere espaço
-                        const gap = item.transform[4] - (lastX + lastWidth);
-                        // Estima largura do caractere
-                        const charWidth = item.width / Math.max(1, item.str.length);
-                        if (gap > charWidth * 0.5) { // Se gap > meio caractere, assume espaço
-                             lineStr += " "; 
-                        }
-                    }
-                    lineStr += item.str;
-                    lastX = item.transform[4];
-                    lastWidth = item.width;
-                });
-                fullLines.push(lineStr);
-            });
-
-            return fullLines;
-        }
-
         async function extractAllTextAndAnnotations(file) {
             const allWords = new Set();
             const arrayBuffer = await file.arrayBuffer();
@@ -186,22 +131,40 @@
             
             for (let i = 1; i <= pdf.numPages; i++) {
                 const page = await pdf.getPage(i);
-                
-                // Anotações
                 const annotations = await page.getAnnotations();
                 annotations.forEach(ann => {
-                    if (ann.contents) {
-                        // Quebra anotações em tokens para análise
-                        ann.contents.split(/[\s\n]+/).forEach(w => allWords.add(w));
-                    }
+                    if (ann.contents) ann.contents.split(/\s+/).forEach(w => allWords.add(w));
                 });
 
-                // Texto do corpo (usando a lógica robusta de linhas)
-                const lines = await extractTextLinesFromPage(page);
-                lines.forEach(line => {
-                    // Divide a linha reconstruída em tokens para encontrar TAGs
-                    line.split(/[\s\n]+/).forEach(w => allWords.add(w));
-                });
+                const textContent = await page.getTextContent();
+                if (textContent.items.length > 0) {
+                    const sortedItems = textContent.items.sort((a, b) => {
+                        const yA = a.transform[5]; const yB = b.transform[5];
+                        const xA = a.transform[4]; const xB = b.transform[4];
+                        if (Math.abs(yA - yB) > 2) return yB - yA;
+                        return xA - xB;
+                    });
+                    
+                    let currentWord = null;
+                    for (const item of sortedItems) {
+                        if (!item.str.trim()) continue;
+                        if (!currentWord) {
+                            currentWord = { text: item.str, y: item.transform[5], x: item.transform[4], width: item.width, height: item.height };
+                            continue;
+                        }
+                        const yDist = Math.abs(item.transform[5] - currentWord.y);
+                        const xDist = item.transform[4] - (currentWord.x + currentWord.width);
+                        const xThreshold = currentWord.height * 0.9;
+                        if (yDist < currentWord.height * 0.5 && xDist >= 0 && xDist < xThreshold) {
+                            currentWord.text += item.str;
+                            currentWord.width = (item.transform[4] + item.width) - currentWord.x;
+                        } else {
+                            currentWord.text.split(/\s+/).forEach(w => allWords.add(w));
+                            currentWord = { text: item.str, y: item.transform[5], x: item.transform[4], width: item.width, height: item.height };
+                        }
+                    }
+                    if (currentWord) currentWord.text.split(/\s+/).forEach(w => allWords.add(w));
+                }
             }
             return allWords;
         }
@@ -261,16 +224,14 @@
             }
             
             const structureMap = new Map();
-            // Regex flexível: aceita letras, números, hífen, ponto. Min 3 chars.
-            const genericTokenRegex = /[A-Z0-9\-\.]{3,}/g;
+            const genericTokenRegex = /[A-Z0-9][A-Z0-9-]{7,20}/g;
 
             allPotentialWords.forEach(word => {
                 const matches = word.match(genericTokenRegex);
                 if (matches) {
                     matches.forEach(token => {
-                        // Filtro básico para evitar lixo muito curto
-                        if (token.length >= 3) {
-                            const structure = generateStructure(token);
+                        const structure = generateStructure(token);
+                        if (structure.includes('A') && structure.includes('D') && token.length > 8) {
                             if (!structureMap.has(structure)) {
                                 structureMap.set(structure, { count: 0, example: token });
                             }
@@ -280,7 +241,7 @@
                 }
             });
 
-            showStatus('Análise concluída. Selecione os padrões.', false);
+            showStatus('Análise concluída. Por favor, selecione os padrões corretos abaixo.', false);
             displayPatternChoices(structureMap);
         }
 
@@ -293,7 +254,7 @@
             }
 
             clearStatus();
-            showStatus(`Extraindo dados...`, true);
+            showStatus(`Iniciando extração com os padrões: ${selectedStructures.join(', ')}`, true);
 
             const data = [];
             for (const [fileName, words] of analysisResults.tokensByFile.entries()) {
@@ -301,15 +262,14 @@
                 const tagsForThisFile = new Set();
                 
                 words.forEach(word => {
-                    if (/[A-Z0-9\-\.]{3,}/.test(word)) {
-                        const structure = generateStructure(word);
-                        if (selectedStructures.includes(structure)) {
-                            tagsForThisFile.add(word);
-                        }
+                    const structure = generateStructure(word);
+                    if (selectedStructures.includes(structure)) {
+                        tagsForThisFile.add(word);
                     }
                 });
 
                 if (tagsForThisFile.size > 0) {
+                    showStatus(`  - Encontrados ${tagsForThisFile.size} dados em ${fileName}.`);
                     tagsForThisFile.forEach(tag => {
                         data.push({ 'Nome da Estrutura': structureName, 'TAG': tag });
                     });
@@ -318,10 +278,11 @@
             
             if (data.length > 0) {
                 generateExcel(data);
-                showStatus('Planilha gerada!', false);
+                showStatus('Planilha Excel gerada com sucesso!', false);
             } else {
-                showStatus('Nenhum dado encontrado.', false);
+                showStatus('Nenhum dado correspondente aos padrões selecionados foi encontrado.', false);
             }
+
             clearStatus();
         }
 
@@ -330,7 +291,7 @@
             const workbook = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(workbook, worksheet, 'Dados Extraídos');
             XLSX.writeFile(workbook, 'dados_extraidos.xlsx');
-            showStatus('Download iniciado.');
+            showStatus('Download da planilha iniciado.');
         }
 
         processPdfBtn.addEventListener('click', () => {
@@ -341,27 +302,28 @@
             }
         });
 
-        // --- FUNÇÃO 2 (PINTURA AVANÇADA) ---
+        // --- FUNÇÃO 2 (PINTAR TAGS) ---
+        // O código da Função 2 permanece o mesmo.
         
         paintTagsBtn.addEventListener('click', processAndPaintTags);
 
         async function processAndPaintTags() {
             if (pdfUpload2.files.length === 0 || !excelUpload.files[0]) {
-                alert('Faltam arquivos.');
+                alert('Por favor, selecione os arquivos PDF e a planilha Excel.');
                 return;
             }
             clearStatus();
-            showStatus('Iniciando pintura de TAGs...', true);
+            showStatus('Iniciando processo para pintar TAGs...', true);
 
             try {
                 const tagsByStructure = await parseExcel(excelUpload.files[0]);
 
                 for (const file of pdfUpload2.files) {
                     const structureName = file.name.replace('.pdf', '');
-                    showStatus(`Processando: ${file.name}`);
+                    showStatus(`Processando arquivo: ${file.name}`);
 
                     if (!tagsByStructure[structureName]) {
-                        showStatus(`  - Sem TAGs na planilha para este arquivo. Pulando.`);
+                        showStatus(`  - Nenhuma TAG encontrada para '${structureName}'. Pulando.`);
                         continue;
                     }
 
@@ -370,12 +332,13 @@
                     const modifiedPdfBytes = await highlightTagsInPdf(arrayBuffer, tagsToFind);
                     
                     createDownloadLink(modifiedPdfBytes, `pintado_${file.name}`);
+                    showStatus(`  - PDF '${file.name}' modificado e pronto para download.`);
                 }
             } catch (error) {
-                console.error(error);
+                console.error('Erro no processo de pintura de TAGs:', error);
                 showStatus(`Erro: ${error.message}`, false);
             }
-            showStatus('Concluído!', false);
+            showStatus('Processo concluído!', false);
         }
 
         async function parseExcel(file) {
@@ -394,14 +357,23 @@
                             const structureName = row['Nome da Estrutura'];
                             const tag = row['TAG'];
                             const quantity = row['Quantidade'] || 1;
+
                             if (structureName && tag) {
-                                if (!tagsByStructure[structureName]) tagsByStructure[structureName] = [];
-                                tagsByStructure[structureName].push({ tag: String(tag), count: parseInt(quantity, 10) });
+                                if (!tagsByStructure[structureName]) {
+                                    tagsByStructure[structureName] = [];
+                                }
+                                tagsByStructure[structureName].push({
+                                    tag: String(tag),
+                                    count: parseInt(quantity, 10)
+                                });
                             }
                         });
                         resolve(tagsByStructure);
-                    } catch (e) { reject(e); }
+                    } catch (e) {
+                        reject(e);
+                    }
                 };
+                reader.onerror = reject;
                 reader.readAsArrayBuffer(file);
             });
         }
@@ -413,7 +385,9 @@
             const pdfjsDoc = await pdfjsLib.getDocument({ data: pdfBytesCopy }).promise;
             
             const paintCount = {};
-            tagsToHighlight.forEach(t => paintCount[t.tag] = 0);
+            tagsToHighlight.forEach(t => {
+                paintCount[t.tag] = 0;
+            });
 
             const pdfLibPages = pdfDoc.getPages();
 
@@ -422,115 +396,24 @@
                 const pdfLibPage = pdfLibPages[i];
                 const textContent = await pdfjsPage.getTextContent();
                 
-                if (!textContent.items.length) continue;
-
-                // --- MAPA DE TEXTO (Char Map) ---
-                // Transforma a "sopa de itens" em uma string linear com referências
-                // Permite encontrar TAGs quebradas entre múltiplos itens
-                
-                // 1. Ordena itens (Y desc, X asc)
-                const items = textContent.items.sort((a, b) => {
-                     const yA = a.transform[5]; const yB = b.transform[5];
-                     if (Math.abs(yA - yB) > 4) return yB - yA; // Linha diferente
-                     return a.transform[4] - b.transform[4]; // Mesma linha, ordena X
-                });
-
-                let fullText = "";
-                const charMap = []; // Índice na fullText -> { item, charIndexInItem }
-
-                let lastItem = null;
-                items.forEach(item => {
-                    // Detecção simples de espaço visual
-                    if (lastItem) {
-                        const yDiff = Math.abs(item.transform[5] - lastItem.transform[5]);
-                        const xDiff = item.transform[4] - (lastItem.transform[4] + lastItem.width);
-                        const isSameLine = yDiff < 5;
-                        
-                        // Se for mesma linha e gap > 30% da altura (heurística), insere espaço
-                        if (isSameLine && xDiff > (item.height * 0.3)) {
-                            fullText += " ";
-                            charMap.push(null); // Espaço não tem item físico
-                        } else if (!isSameLine) {
-                            fullText += "\n";
-                            charMap.push(null);
-                        }
-                    }
-
-                    for (let c = 0; c < item.str.length; c++) {
-                        fullText += item.str[c];
-                        charMap.push({ item, idx: c, totalLen: item.str.length });
-                    }
-                    lastItem = item;
-                });
-
-                // --- BUSCA E PINTURA ---
                 tagsToHighlight.forEach(tagInfo => {
-                    const tag = tagInfo.tag;
-                    if (paintCount[tag] >= tagInfo.count) return;
-
-                    // Busca todas as ocorrências na string reconstruída
-                    let startIndex = 0;
-                    while ((startIndex = fullText.indexOf(tag, startIndex)) !== -1) {
-                        if (paintCount[tag] >= tagInfo.count) break;
-
-                        const endIndex = startIndex + tag.length;
-                        
-                        // Recupera os itens envolvidos nesta TAG
-                        const involvedItems = new Set();
-                        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-                        let validMatch = true;
-
-                        // Verifica quais itens físicos compõem essa string encontrada
-                        const partsToPaint = []; // { item, startChar, endChar }
-
-                        for (let k = startIndex; k < endIndex; k++) {
-                            const mapData = charMap[k];
-                            if (mapData) { // Se não for espaço virtual
-                                const existingPart = partsToPaint.find(p => p.item === mapData.item);
-                                if (existingPart) {
-                                    existingPart.endChar = mapData.idx;
-                                } else {
-                                    partsToPaint.push({ item: mapData.item, startChar: mapData.idx, endChar: mapData.idx });
-                                }
-                            }
-                        }
-
-                        if (partsToPaint.length > 0) {
-                            partsToPaint.forEach(part => {
-                                const item = part.item;
-                                // Cálculo Preciso da Largura (Ajuste pedido pelo usuário)
-                                // Se a TAG é substring (ex: achou "123" dentro de "TAG123"),
-                                // Calculamos a fração da largura.
-                                
-                                const charWidthAvg = item.width / part.item.str.length;
-                                const partLength = (part.endChar - part.startChar) + 1;
-                                
-                                const drawX = item.transform[4] + (part.startChar * charWidthAvg);
-                                const drawWidth = partLength * charWidthAvg;
-                                const drawY = item.transform[5];
-                                const drawHeight = item.height;
-
-                                pdfLibPage.pushOperators(pushGraphicsState());
-                                // Nota: Usando coordenadas brutas simplificadas para fragmentos
-                                // Para maior precisão em rotações complexas, o ideal seria concatTransformationMatrix,
-                                // mas para "recortes" parciais, o cálculo manual de X é mais controlável aqui.
-                                
-                                pdfLibPage.drawRectangle({
-                                    x: drawX,
-                                    y: drawY - (drawHeight * 0.1), // Ajuste baseline
-                                    width: drawWidth,
-                                    height: drawHeight * 0.85,     // Ajuste altura
-                                    color: rgb(0, 1, 0),
-                                    opacity: 0.3,
-                                });
-                                pdfLibPage.pushOperators(popGraphicsState());
+                    textContent.items.forEach(item => {
+                        if (item.str.includes(tagInfo.tag) && paintCount[tagInfo.tag] < tagInfo.count) {
+                            pdfLibPage.pushOperators(pushGraphicsState());
+                            const [a, b, c, d, e, f] = item.transform;
+                            pdfLibPage.pushOperators(concatTransformationMatrix(a, b, c, d, e, f));
+                            pdfLibPage.drawRectangle({
+                                x: 0,
+                                y: -item.height / 4,
+                                width: item.width,
+                                height: item.height,
+                                color: rgb(0, 1, 0),
+                                opacity: 0.3,
                             });
-                            
-                            paintCount[tag]++;
+                            pdfLibPage.pushOperators(popGraphicsState());
+                            paintCount[tagInfo.tag]++;
                         }
-                        
-                        startIndex = endIndex; // Avança busca
-                    }
+                    });
                 });
             }
             return await pdfDoc.save();
@@ -546,6 +429,9 @@
             a.className = 'block bg-orange-500 text-white font-bold py-2 px-4 rounded hover:bg-orange-600 text-center transition-colors';
             downloadLinksEl.appendChild(a);
         }
+
     </script>
 </body>
 </html>
+
+
